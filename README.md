@@ -1,4 +1,7 @@
 
+**1. Change to download videos use <a href="https://github.com/soimort/you-get/tree/develop">you-get</a>**  
+**2. Re-format video to ```.mp4``` if the downloaded video is not ```.mp4``` format**  
+**3. Do resize if the downloaded video resolution inconsistent with the specified resolution**
 # HDTF
 Flow-guided One-shot Talking Face Generation with a High-resolution Audio-visual Dataset
 <a href="https://openaccess.thecvf.com/content/CVPR2021/papers/Zhang_Flow-Guided_One-Shot_Talking_Face_Generation_With_a_High-Resolution_Audio-Visual_Dataset_CVPR_2021_paper.pdf" target="_blank">paper</a>    <a href="https://github.com/MRzzm/HDTF/blob/main/Supplementary%20Materials.pdf" target="_blank">supplementary</a>

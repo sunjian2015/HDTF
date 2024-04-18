@@ -53,6 +53,19 @@ def construct_download_queue(source_dir: os.PathLike, output_dir: os.PathLike) -
 
     for subset in subsets:
         video_urls = read_file_as_space_separated_data(os.path.join(source_dir, f'{subset}_video_url.txt'))
+
+        # # 2024-04 you-get 下载失败的视频
+        # failed_videos = ['RD_Radio30.mp4', 'WRA_MitchDaniels1.mp4', 'WRA_ShelleyMooreCapito1.mp4', 'WRA_RandPaul2.mp4', 'WDA_MarkWarner.mp4', 
+        #                 'WRA_FredUpton.mp4', 'WDA_ChrisCoons.mp4', 'WDA_RichardNeal1.mp4', 'WDA_TedDeutch.mp4', 'WDA_TerriSewell0.mp4', 
+        #                 'RD_Radio44.mp4', 'WRA_CoryGardner.mp4', 'WRA_MarthaRoby.mp4', 'WRA_JohnKasich2.mp4', 'WDA_SheldonWhitehouse0.mp4', 
+        #                 'WDA_DonnaShalala0.mp4', 'RD_Radio32.mp4', 'WDA_NancyPelosi0.mp4', 'WDA_EmanuelCleaver.mp4', 'RD_Radio47.mp4', 
+        #                 'RD_Radio22.mp4', 'WRA_RandPaul1.mp4', 'WRA_GeoffDavis.mp4', 'WDA_PattyMurray1.mp4', 'RD_Radio59.mp4', 
+        #                 'WRA_MarshaBlackburn1.mp4', 'WRA_CathyMcMorrisRodgers2.mp4']
+        # failed_videos_name = [n.split('.')[0].split('_')[1] for n in failed_videos]
+        # new_video_urls = {k:v for k, v in video_urls.items() if k in failed_videos_name}
+        # video_urls = new_video_urls
+
+
         crops = read_file_as_space_separated_data(os.path.join(source_dir, f'{subset}_crop_wh.txt'))
         intervals = read_file_as_space_separated_data(os.path.join(source_dir, f'{subset}_annotion_time.txt'))
         resolutions = read_file_as_space_separated_data(os.path.join(source_dir, f'{subset}_resolution.txt'))
@@ -109,7 +122,7 @@ def download_and_process_video(video_data: Dict, output_dir: str):
     """
     Downloads the video and cuts/crops it into several ones according to the provided time intervals
     """
-    raw_download_path = os.path.join(output_dir, '_videos_raw', f"{video_data['name']}.mp4")
+    raw_download_path = os.path.join(output_dir, '_videos_raw', f"{video_data['name']}")
     raw_download_log_file = os.path.join(output_dir, '_videos_raw', f"{video_data['name']}_download_log.txt")
     download_result = download_video(video_data['id'], raw_download_path, resolution=video_data['resolution'], log_file=raw_download_log_file)
 
@@ -118,12 +131,36 @@ def download_and_process_video(video_data: Dict, output_dir: str):
         print(f'See {raw_download_log_file} for details')
         return
 
+    for suffix in ['mp4', 'mkv', 'webm', 'wmv', 'mpg', 'mpeg', 'mov', 'avi', 'flv']:
+        tmp = raw_download_path + '.' + suffix
+        if os.path.isfile(tmp):
+            raw_download_path = tmp
+            break
+
+    raw_download_path = os.path.abspath(raw_download_path) # 转成绝对路径
+    # 如果不是mp4格式则转为mp4格式
+    if not raw_download_path.endswith('.mp4'):
+        print('Convert to mp4 format...')
+        tmp = raw_download_path.split('.')[0] + '.mp4'
+        command = f'ffmpeg -i {raw_download_path} -q 0 -vcodec libx264 -acodec aac -pixel_format yuv420p -v quiet {tmp}'
+        subprocess.call(command, shell=True)
+        os.remove(raw_download_path)
+        raw_download_path = tmp
+
     # We do not know beforehand, what will be the resolution of the downloaded video
     # Youtube-dl selects a (presumably) highest one
     video_resolution = get_video_resolution(raw_download_path)
-    if not video_resolution != video_data['resolution']:
-        print(f"Downloaded resolution is not correct for {video_data['name']}: {video_resolution} vs {video_data['name']}. Discarding this video.")
-        return
+    # if not video_resolution != video_data['resolution']:
+    #     print(f"Downloaded resolution is not correct for {video_data['name']}: {video_resolution} vs {video_data['name']}. Discarding this video.")
+    #     return
+    if video_resolution != int(video_data['resolution']):
+        print('resolution is not correct, resize...')
+        tmp = raw_download_path.replace('.mp4', '_tmp.mp4')
+        command = f"ffmpeg -i {raw_download_path} -vf scale=-1:{video_data['resolution']} -v quiet {tmp}"
+        subprocess.call(command, shell=True)
+        os.remove(raw_download_path)
+        raw_download_path = tmp.replace('_tmp.mp4', '.mp4')
+        os.rename(tmp, raw_download_path)
 
     for clip_idx in range(len(video_data['intervals'])):
         start, end = video_data['intervals'][clip_idx]
@@ -165,22 +202,48 @@ def download_video(video_id, download_path, resolution: int=None, video_format="
         stderr = subprocess.DEVNULL
     else:
         stderr = open(log_file, "a")
-    video_selection = f"bestvideo[ext={video_format}]"
-    video_selection = video_selection if resolution is None else f"{video_selection}[height={resolution}]"
+
+    # video_selection = f"bestvideo[ext={video_format}]"
+    # 修复下载视频无声音 https://blog.csdn.net/jiaoyangwm/article/details/133015443
+    # https://blog.csdn.net/jiaoyangwm/article/details/133015443#:~:text=2%E3%80%81-,%E4%B8%8B%E8%BD%BD,-HDTF%20%E6%95%B0%E6%8D%AE
+    # video_selection = f"best[ext={video_format}]"
+
+    # 方法一：下载失败的可以用这个方式解决
+    # video_selection = f"bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]"
+    # video_selection = video_selection if resolution is None else f"{video_selection}[height={resolution}]"
+    # command = [
+    #     "youtube-dl",
+    #     "https://youtube.com/watch?v={}".format(video_id), "--quiet", "-f",
+    #     video_selection,
+    #     "--output", download_path,
+    #     "--no-continue"
+    # ]
+
+    # # 方法二：可以不用选择分辨率但下载的视频和文件中的分辨率可能不一致
+    # command = [
+    #     "youtube-dl",
+    #     "https://youtube.com/watch?v={}".format(video_id), "--quiet",
+    #     "--output", download_path,
+    #     "--no-continue"
+    # ]
+
+    # 改为用 you-get 下载 - 作者推荐的方法
+    # v_url = "https://youtube.com/watch?v={}".format(video_id)
+    # command = f"you-get {v_url} --no-caption -O {download_path}"
     command = [
-        "youtube-dl",
-        "https://youtube.com/watch?v={}".format(video_id), "--quiet", "-f",
-        video_selection,
-        "--output", download_path,
-        "--no-continue"
+        "you-get",
+        "https://youtube.com/watch?v={}".format(video_id),
+        "-O", download_path,
+        "--no-caption"
     ]
+
     return_code = subprocess.call(command, stderr=stderr)
     success = return_code == 0
 
     if log_file is not None:
         stderr.close()
 
-    return success and os.path.isfile(download_path)
+    return success # and os.path.isfile(download_path)
 
 
 def get_video_resolution(video_path: os.PathLike) -> int:
